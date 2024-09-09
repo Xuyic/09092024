@@ -3,6 +3,7 @@ import FormData from 'form-data';
 import config from '../config/index.js';
 import { handleFulfilled, handleRejected, handleRequest } from './utils/index.js';
 
+// Constants
 export const ROLE_SYSTEM = 'system';
 export const ROLE_AI = 'assistant';
 export const ROLE_HUMAN = 'user';
@@ -32,7 +33,15 @@ client.interceptors.request.use((c) => {
   return handleRequest(c);
 });
 
-client.interceptors.response.use(handleFulfilled, (err) => {
+client.interceptors.response.use(handleFulfilled, async (err) => {
+  if (err.response?.status === 429) {
+    // Exponential backoff strategy
+    const retryAfter = err.response.headers['retry-after'] || 1; // Retry after time in seconds
+    console.error(`Rate limit exceeded. Retrying after ${retryAfter} seconds...`);
+    await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+    return client.request(err.config); // Retry the request
+  }
+
   if (err.response?.data?.error?.message) {
     err.message = err.response.data.error.message;
   }
@@ -45,7 +54,7 @@ const hasImage = ({ messages }) => (
   ))
 );
 
-const createChatCompletion = ({
+const createChatCompletion = async ({
   model = config.OPENAI_COMPLETION_MODEL,
   messages,
   temperature = config.OPENAI_COMPLETION_TEMPERATURE,
@@ -64,14 +73,13 @@ const createChatCompletion = ({
   return client.post('/v1/chat/completions', body);
 };
 
-const createImage = ({
+const createImage = async ({
   model = config.OPENAI_IMAGE_GENERATION_MODEL,
   prompt,
   size = config.OPENAI_IMAGE_GENERATION_SIZE,
   quality = config.OPENAI_IMAGE_GENERATION_QUALITY,
   n = 1,
 }) => {
-  // set image size to 1024 when using the DALL-E 3 model and the requested size is 256 or 512.
   if (model === MODEL_DALL_E_3 && [IMAGE_SIZE_256, IMAGE_SIZE_512].includes(size)) {
     size = IMAGE_SIZE_1024;
   }
@@ -85,7 +93,7 @@ const createImage = ({
   });
 };
 
-const createAudioTranscriptions = ({
+const createAudioTranscriptions = async ({
   buffer,
   file,
   model = MODEL_WHISPER_1,
